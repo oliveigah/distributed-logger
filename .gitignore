@@ -25,3 +25,5 @@ distributed_logger-*.tar
 
 # Temporary files for e.g. tests
 /tmp
+
+/persist
