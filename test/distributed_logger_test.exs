@@ -2,7 +2,7 @@ defmodule DistributedLoggerTest do
   use ExUnit.Case
 
   setup do
-    File.rm_rf(Application.get_env(:logger, :event_logs_env_folder))
+    File.rm_rf(Application.get_env(:distributed_logger, :event_logs_env_folder))
 
     Helpers.restart_processes()
 
@@ -17,6 +17,8 @@ defmodule DistributedLoggerTest do
     on_exit(fn ->
       Node.list()
       |> Enum.each(&:slave.stop/1)
+
+      File.rm_rf(Application.get_env(:distributed_logger, :event_logs_env_folder))
     end)
   end
 

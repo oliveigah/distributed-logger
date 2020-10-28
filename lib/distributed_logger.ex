@@ -1,11 +1,16 @@
 defmodule DistributedLogger do
   use GenServer
-  @env_folder Application.compile_env!(:logger, :event_logs_env_folder)
+  @env_folder Application.compile_env!(:distributed_logger, :event_logs_env_folder)
   def init(_) do
+    connect_to_cluster()
+
     base_folder = "#{@env_folder}nodes/#{node()}/data"
 
     File.mkdir_p!(base_folder)
     {:ok, File.stream!("#{base_folder}/events.log", [:append])}
+  end
+
+  defp connect_to_cluster() do
   end
 
   def start_link(_ \\ nil) do
@@ -13,17 +18,13 @@ defmodule DistributedLogger do
   end
 
   def write_global(event_data) do
-    {_results, fail_nodes} =
-      :rpc.multicall(
-        __MODULE__,
-        :write_local,
-        [parse_event_data(event_data)],
-        :timer.seconds(5)
-      )
-
-    Enum.each(fail_nodes, &IO.puts("Write failed on node #{&1}"))
-
-    :ok
+    :erpc.multicall(
+      Node.list([:this, :visible]),
+      __MODULE__,
+      :write_local,
+      [parse_event_data(event_data)],
+      :timer.seconds(5)
+    )
   end
 
   def write_local(event_data) do

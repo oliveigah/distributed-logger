@@ -1,5 +1,11 @@
 defmodule Helpers do
-  @env_folder Application.compile_env!(:logger, :event_logs_env_folder)
+  @env_folder Application.compile_env!(:distributed_logger, :event_logs_env_folder)
+
+  @nodes_ports %{
+    "node1" => 7001,
+    "node2" => 7002,
+    "node3" => 7003
+  }
   def get_event_logs() do
     base_folder = "#{@env_folder}/nodes/#{node()}/data"
 
@@ -12,8 +18,18 @@ defmodule Helpers do
     end
   end
 
-  defp inet_loader_args do
-    to_charlist("-loader inet -hosts 127.0.0.1 -setcookie #{:erlang.get_cookie()}")
+  defp args(node_name) do
+    port = Map.get(@nodes_ports, node_name)
+
+    [
+      "-loader inet",
+      "-hosts 127.0.0.1",
+      "-setcookie #{:erlang.get_cookie()}",
+      "-distributed_logger port #{port}",
+      "-distributed_logger nodes [primary,node1,node2,node3]"
+    ]
+    |> Enum.reduce("", fn arg, acc -> "#{acc} #{arg}" end)
+    |> to_charlist()
   end
 
   defp rpc(node, module, function, args) do
@@ -43,7 +59,11 @@ defmodule Helpers do
 
   def spawn_node(node_name) do
     {:ok, node} =
-      :slave.start(to_charlist("127.0.0.1"), String.to_atom(node_name), inet_loader_args())
+      :slave.start(
+        to_charlist("127.0.0.1"),
+        String.to_atom(node_name),
+        args(node_name)
+      )
 
     add_code_paths(node)
     transfer_configuration(node)
