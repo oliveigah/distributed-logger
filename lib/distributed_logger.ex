@@ -35,7 +35,6 @@ defmodule DistributedLogger do
         :timer.seconds(5)
       )
 
-    # TODO: Implement eventual consistency on failure
     Enum.each(fail_nodes, &IO.puts("Write failed on node #{&1}"))
 
     :ok
@@ -81,6 +80,48 @@ defmodule DistributedLogger do
     GenServer.call(__MODULE__, {:read_local, initial_line, final_line})
   end
 
+  @spec generate_consolidated_file(any, any) ::
+          {:ok, String.t()} | {:error, String.t(), [atom]}
+  @doc """
+  Generated a consilidate event log file, which guarantee consistency along all nodes
+
+  - Partial retrieves (initial line > 0 or final line < last line) may be inconsistent, but can be used for performance reasons
+  - border inclusive
+  - is safe to use any integer as parameter
+  - To retrieve all file you just need to use 0 as initial line and a very big number as final line
+  - The file is generated with a time stamp and inside the node's data folder
+  - The file name is returned as second element of the tuple
+
+  ## Examples
+      iex> {:ok, _file_path} = DistributedLogger.generate_consolidated_file(0,100)
+  """
+  def generate_consolidated_file(initial_line, final_line) do
+    :rpc.multicall(
+      Node.list([:this, :visible]),
+      __MODULE__,
+      :read_local,
+      [initial_line, final_line],
+      :timer.seconds(5)
+    )
+    |> generate_file()
+  end
+
+  defp generate_file({[_h | _t] = nodes_results, []}) do
+    file_path =
+      nodes_results
+      |> Stream.flat_map(fn x -> x end)
+      |> Stream.uniq()
+      |> Stream.map(fn event -> "#{event}\n" end)
+      |> Enum.sort()
+      |> write_to_consolidated_file()
+
+    {:ok, file_path}
+  end
+
+  defp generate_file({_, [_h | _t] = fail_nodes}) do
+    {:error, "Some nodes did not respond. Impossible to guarantee consistency", fail_nodes}
+  end
+
   @doc false
   def handle_call({:write_local, event_data}, _from, file_stream) do
     ["#{event_data}", "\n"]
@@ -104,5 +145,22 @@ defmodule DistributedLogger do
   defp parse_event_data(event_data) do
     timestamp = DateTime.to_unix(DateTime.utc_now())
     "#{timestamp} #{event_data}"
+  end
+
+  defp write_to_consolidated_file(data) do
+    base_folder = "#{@env_folder}nodes/#{node()}/data"
+    timestamp = DateTime.to_unix(DateTime.utc_now())
+    file_path = "#{base_folder}/#{timestamp}-consolidated-events.log"
+
+    File.mkdir_p!(base_folder)
+    File.write(file_path, "", [:append])
+
+    strm = File.stream!(file_path, [:append])
+
+    data
+    |> Stream.into(strm)
+    |> Stream.run()
+
+    file_path
   end
 end
