@@ -1,4 +1,6 @@
 defmodule Helpers do
+  @moduledoc false
+
   @nodes_ports %{
     "node1" => 7001,
     "node2" => 7002,

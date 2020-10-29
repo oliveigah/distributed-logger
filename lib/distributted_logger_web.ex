@@ -8,7 +8,10 @@ defmodule DistributedLogger.Web do
 
   def child_spec(_arg) do
     port = Application.fetch_env!(:distributed_logger, :port)
-    IO.puts("Account HTTP server listening to: port #{port}")
+
+    if Application.get_env(:distributed_logger, :environment) !== :test do
+      IO.puts("#{inspect(node())} running listening to: POST localhost:#{port}/event")
+    end
 
     Plug.Adapters.Cowboy.child_spec(
       scheme: :http,

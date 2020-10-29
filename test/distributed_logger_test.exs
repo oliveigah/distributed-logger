@@ -1,6 +1,8 @@
 defmodule DistributedLoggerTest do
   use ExUnit.Case
 
+  doctest DistributedLogger
+
   import Helpers
 
   setup do

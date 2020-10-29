@@ -1,6 +1,8 @@
 defmodule DistributedLogger do
+  @doc false
   use GenServer
   @env_folder Application.compile_env!(:distributed_logger, :event_logs_env_folder)
+  @doc false
   def init(_) do
     base_folder = "#{@env_folder}nodes/#{node()}/data"
 
@@ -10,28 +12,76 @@ defmodule DistributedLogger do
     {:ok, File.stream!("#{base_folder}/events.log", [:append])}
   end
 
+  @doc false
   def start_link(_ \\ nil) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
+  @spec write_global(String.t()) :: :ok
+  @doc """
+  Writes event data globally (all nodes)
+
+  ## Examples
+      iex> DistributedLogger.write_global("event data")
+      iex> :ok
+  """
   def write_global(event_data) do
-    :erpc.multicall(
-      Node.list([:this, :visible]),
-      __MODULE__,
-      :write_local,
-      [parse_event_data(event_data)],
-      :timer.seconds(5)
-    )
+    {_results, fail_nodes} =
+      :rpc.multicall(
+        Node.list([:this, :visible]),
+        __MODULE__,
+        :write_local,
+        [parse_event_data(event_data)],
+        :timer.seconds(5)
+      )
+
+    # TODO: Implement eventual consistency on failure
+    Enum.each(fail_nodes, &IO.puts("Write failed on node #{&1}"))
+
+    :ok
   end
 
+  @spec write_local(String.t()) :: :ok
+  @doc """
+  Writes event data locally (only this node)
+
+  ## Examples
+      iex> DistributedLogger.write_local("event data")
+      iex> :ok
+  """
   def write_local(event_data) do
     GenServer.call(__MODULE__, {:write_local, event_data})
   end
 
+  @spec read_local(integer(), integer()) :: list(String.t())
+  @doc """
+  Read lines of the local log file.
+
+  - 0 index based
+  - border inclusive
+  - is safe to use any integer as parameter
+
+  ## Examples
+      iex> DistributedLogger.write_local("event 0")
+      iex> DistributedLogger.write_local("event 1")
+      iex> DistributedLogger.write_local("event 2")
+      iex> DistributedLogger.write_local("event 3")
+      iex> DistributedLogger.read_local(1,2)
+      iex> ["event 1", "event 2"]
+
+      iex> DistributedLogger.read_local(1,10)
+      iex> []
+
+      iex> DistributedLogger.write_local("event 0")
+      iex> DistributedLogger.write_local("event 1")
+      iex> DistributedLogger.read_local(-57,454785)
+      iex> ["event 0", "event 1"]
+  """
   def read_local(initial_line, final_line) do
     GenServer.call(__MODULE__, {:read_local, initial_line, final_line})
   end
 
+  @doc false
   def handle_call({:write_local, event_data}, _from, file_stream) do
     ["#{event_data}", "\n"]
     |> Stream.into(file_stream)
@@ -51,7 +101,7 @@ defmodule DistributedLogger do
     {:reply, lines_list, file_stream}
   end
 
-  def parse_event_data(event_data) do
+  defp parse_event_data(event_data) do
     timestamp = DateTime.to_unix(DateTime.utc_now())
     "#{timestamp} #{event_data}"
   end
