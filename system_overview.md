@@ -71,6 +71,8 @@ Via terminal you have 3 main functions to interact with:
 
 `DistributedLogger.read_local/2` : Receives initial line and final line, returning a list containing all the lines requested from the local file
 
+`DistributedLogger.generate_consolidated_file/2` : Receives initial line and final line, guarantee consistency over all nodes only if inital_line <= 0 and final_line >= biggest log file line number, returns a tuple containing the file path to the generated file, file will be generated inside the node folder
+
 The docs for all these functions can be accessed via terminal running the `h` command. (eg: `h DistributedLogger.write_global/1`)
 
 ### HTTP
@@ -93,16 +95,33 @@ If you want to see the logs that are being generated you can check inside the pe
 
 Each event is in one line and the unix timestamp is added to the data
 
+### Consolidate File
+
+Since the system is distributed errors may occur leading to inconsistency between nodes. Because of this you have the `DistributedLogger.generate_consolidated_file/2` function.
+
+It implements a very simple algorithm to consolidate multiple log files. It relies on the fact that each log starts with a utc unix timestamp and that each server will at least be able to save the log on it's own file.
+
+The algorithm steps:
+
+```elixir
+retrieve_lines_from_each_node()
+|> select_only_unique_lines()
+|> sort()
+|> save_on_consolidate_file()
+```
+
+You can run this function either in a already running system using the terminal or if you started the application as daemons via the shell script you can connect a new iex terminal to your already running daemon nodes using the following code inside the project's folder:
+
+`iex --name node4@127.0.0.1 --erl "-distributed_logger port 5558 -distributed_logger nodes [node1,node2,node3]" -S mix`
+
+And run the `DistributedLogger.generate_consolidated_file/2` to generate the file!
+
 ## System Overview
 
 WIP
 
 ![](./assets/exdocs_assets/node-diagram.png)
 ![](./assets/exdocs_assets/cluster-diagram.png)
-
-## Distributed Logger
-
-WIP
 
 ## Design Choices
 

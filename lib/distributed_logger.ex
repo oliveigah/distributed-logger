@@ -80,7 +80,7 @@ defmodule DistributedLogger do
     GenServer.call(__MODULE__, {:read_local, initial_line, final_line})
   end
 
-  @spec generate_consolidated_file(any, any) ::
+  @spec generate_consolidated_file(integer(), integer()) ::
           {:ok, String.t()} | {:error, String.t(), [atom]}
   @doc """
   Generated a consilidate event log file, which guarantee consistency along all nodes
