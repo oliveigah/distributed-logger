@@ -27,7 +27,7 @@ You have 2 ways to run the system:
 
 2 - `bash ./scripts/run.sh` script inside the project's folder to start 3 fully connected nodes running on the ports 5555, 5556 and 5557
 
-### IEX
+### Iex
 
 If you want to run the system via iex you can run the following command (#{xxx} must be replaced):
 
@@ -61,7 +61,7 @@ If you dont want to run with iex you can run the shell script inside the project
 
 To interact with the system you can go either by terminal (only if you have chosen the IEX approach on the previous section) using the `DistributedLogger` module or using http requests (avaiable for both, IEX and shell script) to the listening ports of the nodes.
 
-### IEX
+### Iex
 
 Via terminal you have 3 main functions to interact with:
 
@@ -99,17 +99,6 @@ Each event is in one line and the unix timestamp is added to the data
 
 Since the system is distributed errors may occur leading to inconsistency between nodes. Because of this you have the `DistributedLogger.generate_consolidated_file/2` function.
 
-It implements a very simple algorithm to consolidate multiple log files. It relies on the fact that each log starts with a utc unix timestamp and that each server will at least be able to save the log on it's own file.
-
-The algorithm steps:
-
-```elixir
-retrieve_lines_from_each_node()
-|> select_only_unique_lines()
-|> sort()
-|> save_on_consolidate_file()
-```
-
 You can run this function either in a already running system using the terminal or if you started the application as daemons via the shell script you can connect a new iex terminal to your already running daemon nodes using the following code inside the project's folder:
 
 `iex --name node4@127.0.0.1 --erl "-distributed_logger port 5558 -distributed_logger nodes [node1,node2,node3]" -S mix`
@@ -118,11 +107,43 @@ And run the `DistributedLogger.generate_consolidated_file/2` to generate the fil
 
 ## System Overview
 
-WIP
+The system is quite simple, the main module is `DistributedLogger` which runs the gen_server, makes multicalls to other nodes and generate the consolidated version of the logs. Http requests are handled by the Cowboy library using Plug!
 
 ![](./assets/exdocs_assets/node-diagram.png)
+
+### GenServer
+
+The `DistributedLogger` genserver holds a `File.Stream` as its state, which is used on the message callbacks to read and write data on the file!
+
+The server acepts basicallly 2 types of requests, read local and write local. Note that the server only handles local file management, it do not know about other nodes running different logs.
+
+- init: Creates the file if it dont exists and open the stream
+
+- write_local: Uses the file stream to append on the file
+
+- read_local: Uses the file stream to read lines from the file
+
+### Multicall
+
+To save the data on multiple nodes the node from where you are calling `DistributedLogger.write_global/1`. Note that this code did not run inside the server, it actually runs on the client process, cowboy processes if tou are interacting via http or the iex process itself if you are interacting via terminal.
+
+To achieve this goal the system uses the `:rpc.multicall/5` function from the erlang library!
+
 ![](./assets/exdocs_assets/cluster-diagram.png)
 
-## Design Choices
+### Consolidate File
 
-WIP
+This functionality is implemented inside `DistributedLogger.generate_consolidated_file/2`, it receives initial and final line as parameter so you can select a chunk of the files to consolidate, but remenber this isn't safe, which means that when you use a `initial_line > 0` or a `final_line < last line` the algorithm can not guarantee the consistency. It guarantees consistency only on full file consolidations.
+
+It implements a very simple algorithm to consolidate multiple log files. It relies on the fact that each log starts with a utc unix timestamp and that each server will at least be able to save the log on it's own file.
+
+The algorithm steps are as following:
+
+```elixir
+retrieve_lines_from_each_node()
+|> select_only_unique_lines()
+|> sort()
+|> save_on_consolidate_file()
+```
+
+## Design Choices
