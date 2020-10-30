@@ -107,7 +107,7 @@ And run the `DistributedLogger.generate_consolidated_file/2` to generate the fil
 
 ## System Overview
 
-The system is quite simple, the main module is `DistributedLogger` which runs the gen_server, makes multicalls to other nodes and generate the consolidated version of the logs. Http requests are handled by the Cowboy library using Plug!
+The system is quite simple, the main module is `DistributedLogger` which runs the gen_server, makes multicasts to other nodes and generate the consolidated version of the logs. Http requests are handled by the Cowboy library using Plug!
 
 ![](./assets/exdocs_assets/node-diagram.png)
 
@@ -123,13 +123,17 @@ The server acepts basicallly 2 types of requests, read local and write local. No
 
 - read_local: Uses the file stream to read lines from the file
 
-### Multicall
+### Multicast
 
-To save the data on multiple nodes the node from where you are calling `DistributedLogger.write_global/1`. Note that this code did not run inside the server, it actually runs on the client process, cowboy processes if tou are interacting via http or the iex process itself if you are interacting via terminal.
+To save the data on multiple nodes the node from where you are calling `DistributedLogger.write_global/1` sends a message to all other nodes.
 
-To achieve this goal the system uses the `:rpc.multicall/5` function from the erlang library!
+Note that this code did not run inside the server, it actually runs on the client process, which is cowboy processes if tou are interacting via http or the iex process itself if you are interacting via terminal.
+
+To achieve this goal the system uses the `:erpc.multicast/4` function from the erlang library!
 
 ![](./assets/exdocs_assets/cluster-diagram.png)
+
+Note that the multicast function call in the exact same way all nodes (even the node where the multicast is running).
 
 ### Consolidate File
 
@@ -147,3 +151,56 @@ retrieve_lines_from_each_node()
 ```
 
 ## Design Choices
+
+### Http is not the system
+
+The system was designed to be a self contained application, which means it does not need the HTTP interface to exists, you could interact and have fully functional system without using any http interface! This reflects in the code when you see something like this:
+
+```elixir
+post("event") do
+    {:ok, event_data, conn} = Plug.Conn.read_body(conn)
+
+    event_data
+    |> DistributedLogger.write_global()
+    |> send_http_response(conn)
+  end
+```
+
+As the code above shows, the Http turns out to be just an interface to the system, responsible for parsing the data into something understandable by the bussiness modules.
+
+This kind of design is inpired on the famous "Clean Architecture" from Robert Martin. With this we achieve not just decoupling from the interface and business rules, but also achieve reusability, since the same system could be pluged into another interface, like a CLI!
+
+### GenServer only local
+
+As described earlier the `DistributedLogger` gen_server only handles with local file management and doing simple operations like read and write from the stream. This is done on purpose so the system can be more responsive under load, because the main process (responsible for the core bussiness) will never be overwhelmed by others non-core and sometimes expensive tasks such as consolidate the file or calling other nodes.
+
+We could extend this approach and maintain only `write_local/1` inside the server, and move `read_local/2` to the client too.
+
+### Cast vs Call
+
+The `DistributedLogger` gen_server has 2 functions, `write_local/1` which is a cast and `read_local/2` which is a call. This is done again by performance reasons. Tradeoffs are clear, when using cast your client process is unbounded from the actual computation of saving an event on the file, because it doest not care about the respose, so it could serves more requests.
+
+This benefit do not make much sense in this application as it is right now because http process has only one function implemented post event, which uses the `write_local/1` function, and since this `DistributedLogger` is a unique locally named process , does not help much unbound the http process from the bussiness process, because although the http process is free to do anything else, the only thing it can do righ now is ask to the bussiness process which may be processing the last request any way.
+
+Although it does not make much sense in the way the system is right now a next step to improve this system would be transforming the unique named process `DistributedLogger` into a dynamically generated process, running one process for each file.
+
+For instance if your logging system serves 3 apps (app1,app2 and app3) the system would ran 3 instances of `DistributedLogger` one streaming data to `app1.log` other to `app2.log` and the last to `app3.log`.
+
+With this natural improvement, the cast choice will be much more efficient and make a http process serves many more requests.
+
+### Multicasting it self
+
+```elixir
+:erpc.multicast(
+      Node.list([:this, :visible]),
+      __MODULE__,
+      :write_local,
+      [parse_event_data(event_data)]
+    )
+```
+
+When you run `write_global/1` the code above is executed on the client process. Note that the node issues a message to itself. This is done to try reduce inconsistency.
+
+Since `:erpc.multicast/4` issues all the requests at the same time there is no chance to programatically saves data in one node and not on the other, this will happens only in case of network partions.
+
+Beyond that it improves avaiability because even if the local `write_local/1` function breaks, all other nodes will be called and the data comming from the http port of this node will be replicated on other nodes, keeping part of the system (http) running, even though the logging is not working on this particular node.

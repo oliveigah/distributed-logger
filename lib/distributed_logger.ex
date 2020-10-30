@@ -26,16 +26,14 @@ defmodule DistributedLogger do
       iex> :ok
   """
   def write_global(event_data) do
-    {_results, fail_nodes} =
-      :rpc.multicall(
-        Node.list([:this, :visible]),
-        __MODULE__,
-        :write_local,
-        [parse_event_data(event_data)],
-        :timer.seconds(5)
-      )
+    :erpc.multicast(
+      Node.list([:this, :visible]),
+      __MODULE__,
+      :write_local,
+      [parse_event_data(event_data)]
+    )
 
-    Enum.each(fail_nodes, &IO.puts("Write failed on node #{&1}"))
+    # Enum.each(fail_nodes, &IO.puts("Write failed on node #{&1}"))
 
     :ok
   end
@@ -49,7 +47,7 @@ defmodule DistributedLogger do
       iex> :ok
   """
   def write_local(event_data) do
-    GenServer.call(__MODULE__, {:write_local, event_data})
+    GenServer.cast(__MODULE__, {:write_local, event_data})
   end
 
   @spec read_local(integer(), integer()) :: list(String.t())
@@ -123,12 +121,12 @@ defmodule DistributedLogger do
   end
 
   @doc false
-  def handle_call({:write_local, event_data}, _from, file_stream) do
+  def handle_cast({:write_local, event_data}, file_stream) do
     ["#{event_data}", "\n"]
     |> Stream.into(file_stream)
     |> Stream.run()
 
-    {:reply, :ok, file_stream}
+    {:noreply, file_stream}
   end
 
   def handle_call({:read_local, initial_line, final_line}, _from, file_stream) do
